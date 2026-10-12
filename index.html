@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>📷 كاميرا الموقع - صور بالإحداثيات</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   body {
@@ -12,7 +13,7 @@
     background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
     min-height:100vh; color:#fff; padding-bottom:40px;
   }
-  .container { max-width:1000px; margin:0 auto; padding:20px; }
+  .container { max-width:1100px; margin:0 auto; padding:20px; }
   header { text-align:center; padding:25px 0 15px; }
   header h1 { font-size:26px; margin-bottom:6px; }
   header p { color:#9fd3e8; font-size:14px; }
@@ -31,17 +32,41 @@
   button {
     border:none; cursor:pointer; font-family:inherit; font-weight:bold;
     border-radius:12px; padding:14px 22px; font-size:16px;
-    display:flex; align-items:center; gap:8px;
+    display:flex; align-items:center; justify-content:center; gap:8px;
     transition:transform .15s, box-shadow .15s;
   }
   button:active { transform:scale(.95); }
   .btn-camera { background:linear-gradient(135deg,#11998e,#38ef7d); color:#06281f; box-shadow:0 4px 15px rgba(56,239,125,.35); }
   .btn-pdf    { background:linear-gradient(135deg,#cb2d3e,#ef473a); color:#fff; box-shadow:0 4px 15px rgba(239,71,58,.35); }
+  .btn-excel  { background:linear-gradient(135deg,#1d6f42,#33a466); color:#fff; box-shadow:0 4px 15px rgba(51,164,102,.35); }
   .btn-clear  { background:rgba(255,255,255,.12); color:#ffb3b3; border:1px solid rgba(255,255,255,.25); }
   button:disabled { opacity:.5; cursor:not-allowed; }
 
   .stats { text-align:center; margin:10px 0 20px; color:#cfe9f5; font-size:15px; }
   .stats b { color:#38ef7d; }
+
+  /* ===== جدول البلاغات ===== */
+  .table-box { margin:10px 0 28px; display:none; }
+  .table-box.show { display:block; }
+  .table-title { text-align:center; color:#cfe9f5; font-size:15px; margin-bottom:10px; }
+  .table-title b { color:#38ef7d; }
+  .table-wrap { overflow-x:auto; border-radius:12px; border:1px solid rgba(255,255,255,.15); background:rgba(255,255,255,.05); }
+  table { width:100%; border-collapse:collapse; min-width:780px; font-size:13px; }
+  th { background:rgba(56,239,125,.15); color:#bfffdc; padding:10px 8px; white-space:nowrap; position:sticky; top:0; }
+  td { padding:9px 8px; border-top:1px solid rgba(255,255,255,.1); vertical-align:middle; text-align:center; }
+  .td-desc { text-align:right; min-width:160px; max-width:260px; line-height:1.6; }
+  .ltr { direction:ltr; unicode-bidi:embed; }
+  .coord-sm { direction:ltr; color:#7ef0c1; font-weight:bold; font-size:12px; white-space:nowrap; }
+  .coord-sm a { color:#7ef0c1; }
+  .time-sm { color:#bcd6e2; font-size:11.5px; }
+  .warn { color:#ffb3b3; font-size:12px; }
+  .row-img { width:90px; height:70px; object-fit:cover; border-radius:8px; cursor:pointer; display:block; margin:0 auto 4px; }
+  .btn-row { padding:8px 12px; font-size:13px; border-radius:9px; margin:5px auto 0; background:linear-gradient(135deg,#11998e,#38ef7d); color:#06281f; white-space:nowrap; }
+  .btn-row.again { background:rgba(255,255,255,.14); color:#d9ffe9; border:1px solid rgba(255,255,255,.25); }
+  .dist { font-weight:bold; white-space:nowrap; }
+  .dist-ok { color:#38ef7d; } .dist-mid { color:#ffc65c; } .dist-far { color:#ff7b72; }
+  .count { font-weight:bold; font-size:15px; }
+  .count.dup { color:#ffc65c; }
 
   .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:16px; }
   .card {
@@ -87,9 +112,33 @@
 
   <div class="toolbar">
     <button class="btn-camera" id="btnCamera">📸 التقاط صورة</button>
+    <button class="btn-excel" id="btnExcel">📊 إدراج ملف Excel</button>
     <button class="btn-pdf" id="btnPdf">📄 تصدير PDF</button>
-    <button class="btn-clear" id="btnClear">🗑️ مسح الكل</button>
+    <button class="btn-clear" id="btnClear">🗑️ مسح الصور</button>
   </div>
+
+  <!-- جدول البلاغات -->
+  <section class="table-box" id="tableBox">
+    <div class="table-title" id="tableTitle"></div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>رقم الجوال</th>
+            <th>الوصف</th>
+            <th>موقع البلاغ</th>
+            <th>الصورة</th>
+            <th>الفرق</th>
+            <th>التكرار</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+    <div class="toolbar">
+      <button class="btn-clear" id="btnClearTable">🗑️ مسح الجدول</button>
+    </div>
+  </section>
 
   <div class="stats" id="stats"></div>
   <div class="grid" id="grid"></div>
@@ -100,6 +149,7 @@
 </div>
 
 <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none">
+<input type="file" id="excelInput" accept=".xlsx,.xls,.csv" style="display:none">
 
 <div class="overlay" id="overlay"><div class="spinner"></div><p id="overlayText">جارٍ المعالجة...</p></div>
 
@@ -165,6 +215,7 @@ function showOverlay(t){$('overlayText').textContent=t;$('overlay').classList.ad
 function hideOverlay(){$('overlay').classList.remove('show');}
 let toastTimer=null;
 function toast(msg,ms=3000){const t=$('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),ms);}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function fmtTime(ts){return new Date(ts).toLocaleString('ar-SA',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});}
 function fmtTimeNum(ts){const d=new Date(ts);const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())} - ${p(d.getHours())}:${p(d.getMinutes())}`;}
 function fmtCoord(p){
@@ -179,6 +230,17 @@ function explainError(err){
   if(n==='InvalidStateError'||m.includes('closing')) return '❌ انقطع اتصال التخزين — أعد المحاولة';
   return '❌ حدث خطأ أثناء الحفظ: '+(n||m);
 }
+
+/* ================== المسافة بين إحداثيتين ================== */
+function distM(lat1,lng1,lat2,lng2){
+  const R=6371000, t=x=>x*Math.PI/180;
+  const dLat=t(lat2-lat1), dLng=t(lng2-lng1);
+  const h=Math.sin(dLat/2)**2+Math.cos(t(lat1))*Math.cos(t(lat2))*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+function fmtDist(m){return m<1000?Math.round(m)+' م':(m/1000).toFixed(2)+' كم';}
+function fmtDistEn(m){return m<1000?Math.round(m)+' m':(m/1000).toFixed(2)+' km';}
+function distClass(m){return m<=50?'dist-ok':(m<=200?'dist-mid':'dist-far');}
 
 /* ================== Arabic reshaper ================== */
 const AR_DUAL={'ب':[0xFE8F,0xFE90,0xFE91,0xFE92],'ت':[0xFE95,0xFE96,0xFE97,0xFE98],'ث':[0xFE99,0xFE9A,0xFE9B,0xFE9C],'ج':[0xFE9D,0xFE9E,0xFE9F,0xFEA0],'ح':[0xFEA1,0xFEA2,0xFEA3,0xFEA4],'خ':[0xFEA5,0xFEA6,0xFEA7,0xFEA8],'س':[0xFEB1,0xFEB2,0xFEB3,0xFEB4],'ش':[0xFEB5,0xFEB6,0xFEB7,0xFEB8],'ص':[0xFEB9,0xFEBA,0xFEBB,0xFEBC],'ض':[0xFEBD,0xFEBE,0xFEBF,0xFEC0],'ط':[0xFEC1,0xFEC2,0xFEC3,0xFEC4],'ظ':[0xFEC5,0xFEC6,0xFEC7,0xFEC8],'ع':[0xFEC9,0xFECA,0xFECB,0xFECC],'غ':[0xFECD,0xFECE,0xFECF,0xFED0],'ف':[0xFED1,0xFED2,0xFED3,0xFED4],'ق':[0xFED5,0xFED6,0xFED7,0xFED8],'ك':[0xFED9,0xFEDA,0xFEDB,0xFEDC],'ل':[0xFEDD,0xFEDE,0xFEDF,0xFEE0],'م':[0xFEE1,0xFEE2,0xFEE3,0xFEE4],'ن':[0xFEE5,0xFEE6,0xFEE7,0xFEE8],'ه':[0xFEE9,0xFEEA,0xFEEB,0xFEEC],'ي':[0xFEF1,0xFEF2,0xFEF3,0xFEF4],'ئ':[0xFE89,0xFE8A,0xFE8B,0xFE8C]};
@@ -299,10 +361,137 @@ try{ hoodInput.value=localStorage.getItem('hood')||''; }catch(_){}
 hoodInput.addEventListener('input',()=>{try{localStorage.setItem('hood',hoodInput.value.trim());}catch(_){}});
 const getHood=()=>hoodInput.value.trim();
 
+/* ================== Excel: قراءة البلاغات ================== */
+let reportRows=[];      // صفوف الجدول بعد إزالة تكرار الجوال
+let reportFile='';
+let captureRowKey=null; // الصف الذي نلتقط له صورة الآن
+
+function normDigits(s){
+  return String(s??'')
+    .replace(/[٠-٩]/g,d=>'٠١٢٣٤٥٦٧٨٩'.indexOf(d))
+    .replace(/[۰-۹]/g,d=>'۰۱۲۳۴۵۶۷۸۹'.indexOf(d))
+    .replace(/٫/g,'.').replace(/،/g,',');
+}
+function normPhone(v){
+  let d=normDigits(v).replace(/\D/g,'');
+  if(d.startsWith('00966')) d=d.slice(5);
+  else if(d.startsWith('966')) d=d.slice(3);
+  if(d.length===9 && d[0]==='5') d='0'+d;
+  return d;
+}
+// استخراج الإحداثيات الرقمية من رابط خرائط أو نص
+function extractCoords(v){
+  let s=normDigits(v);
+  try{ s=decodeURIComponent(s); }catch(_){}
+  const N='(-?\\d{1,3}(?:\\.\\d+)?)';
+  const patterns=[
+    new RegExp('!3d'+N+'!4d'+N),
+    new RegExp('@'+N+',\\s*'+N),
+    new RegExp('[?&](?:q|query|ll|destination|daddr|center|sll)=(?:loc:)?\\s*'+N+'\\s*,\\s*'+N),
+    /(-?\d{1,2}\.\d{3,})\s*[,\s]\s*(-?\d{1,3}\.\d{3,})/
+  ];
+  for(const re of patterns){
+    const m=s.match(re);
+    if(m){
+      const lat=parseFloat(m[1]), lng=parseFloat(m[2]);
+      if(isFinite(lat)&&isFinite(lng)&&Math.abs(lat)<=90&&Math.abs(lng)<=180&&!(lat===0&&lng===0))
+        return {lat,lng};
+    }
+  }
+  return null;
+}
+function isShortLink(v){return /goo\.gl|maps\.app|bit\.ly/i.test(String(v||''));}
+const cleanHead=s=>String(s??'').replace(/\s+/g,'').trim();
+
+function parseWorkbook(wb){
+  const ws=wb.Sheets[wb.SheetNames[0]];
+  if(!ws||!ws['!ref']) throw new Error('الملف فارغ');
+  const range=XLSX.utils.decode_range(ws['!ref']);
+  const aoa=XLSX.utils.sheet_to_json(ws,{header:1,defval:'',raw:false,blankrows:true});
+
+  // البحث عن صف العناوين
+  let hr=-1, cPhone=-1, cDesc=-1, cLoc=-1;
+  for(let r=0;r<Math.min(aoa.length,15);r++){
+    const row=aoa[r].map(cleanHead);
+    const fp=row.findIndex(h=>h.includes('جوال')||h.includes('الهاتف')||h.includes('موبايل'));
+    const fd=row.findIndex(h=>h.includes('الوصف')||h==='وصف');
+    const fl=row.findIndex(h=>h.includes('موقعالبلاغ')||h.includes('الموقع')||h.includes('موقع'));
+    if(fp>=0||fl>=0){ hr=r; cPhone=fp; cDesc=fd; cLoc=fl; break; }
+  }
+  if(hr<0) throw new Error('لم أجد أعمدة «رقم الجوال» و«موقع البلاغ» في الملف');
+  if(cLoc<0) throw new Error('لم أجد عمود «موقع البلاغ»');
+
+  const map=new Map(), out=[];
+  for(let r=hr+1;r<aoa.length;r++){
+    const row=aoa[r];
+    if(!row||row.every(c=>String(c).trim()==='')) continue;
+    // قيمة الموقع: الرابط المخفي داخل الخلية إن وجد، وإلا النص
+    const addr=XLSX.utils.encode_cell({r:range.s.r+r,c:range.s.c+cLoc});
+    const cell=ws[addr];
+    const link=cell&&cell.l&&cell.l.Target?cell.l.Target:'';
+    const locText=String(row[cLoc]??'').trim();
+    const rawLoc=link||locText;
+    const coords=extractCoords(link)||extractCoords(locText);
+
+    const phoneRaw=cPhone>=0?String(row[cPhone]??'').trim():'';
+    const phone=normPhone(phoneRaw);
+    const desc=cDesc>=0?String(row[cDesc]??'').trim():'';
+    const key=phone?('p'+phone):('r'+r);
+
+    if(phone && map.has(key)){
+      const ex=map.get(key);
+      ex.count++;
+      if(ex.lat==null && coords){ ex.lat=coords.lat; ex.lng=coords.lng; ex.rawLoc=rawLoc; }
+      if(!ex.desc && desc) ex.desc=desc;
+      continue;
+    }
+    const rec={key,phone:phone||phoneRaw,desc,rawLoc,lat:coords?coords.lat:null,lng:coords?coords.lng:null,count:1};
+    map.set(key,rec); out.push(rec);
+  }
+  return out;
+}
+
+$('btnExcel').addEventListener('click',()=>{
+  if(!window.XLSX){toast('⚠️ مكتبة Excel لم تُحمّل — تحقق من الإنترنت');return;}
+  $('excelInput').click();
+});
+$('excelInput').addEventListener('change',async e=>{
+  const file=e.target.files[0];
+  e.target.value='';
+  if(!file) return;
+  try{
+    if(reportRows.length && !confirm('سيتم استبدال الجدول الحالي بالملف الجديد. متابعة؟')) return;
+    showOverlay('📊 جارٍ قراءة ملف Excel...');
+    const buf=await file.arrayBuffer();
+    const wb=XLSX.read(buf,{type:'array'});
+    const rows=parseWorkbook(wb);
+    if(!rows.length) throw new Error('لا توجد صفوف في الملف');
+    reportRows=rows; reportFile=file.name;
+    await metaSet('reportRows',reportRows);
+    await metaSet('reportFile',reportFile);
+    hideOverlay();
+    const noCoord=rows.filter(r=>r.lat==null).length;
+    toast(`✅ تم إدراج ${rows.length} بلاغ`+(noCoord?` — ${noCoord} بدون إحداثيات`:''),5000);
+    render();
+  }catch(err){
+    console.error(err);
+    hideOverlay();
+    toast('❌ '+(err.message||'تعذر قراءة الملف'),6000);
+  }
+});
+
+$('btnClearTable').addEventListener('click',async()=>{
+  if(!confirm('حذف الجدول؟ (الصور تبقى محفوظة)'))return;
+  reportRows=[]; reportFile='';
+  try{ await metaSet('reportRows',[]); await metaSet('reportFile',''); }catch(_){}
+  render(); toast('🗑️ تم مسح الجدول');
+});
+
 /* ================== Capture flow ================== */
-$('btnCamera').addEventListener('click',()=>{$('cameraInput').click();});
+$('btnCamera').addEventListener('click',()=>{captureRowKey=null;$('cameraInput').click();});
 $('cameraInput').addEventListener('change',async e=>{
   const file=e.target.files[0];
+  const rowKey=captureRowKey; captureRowKey=null;
   if(!file){ e.target.value=''; return; }
   try{
     showOverlay('📍 جارٍ تحديد الموقع...');
@@ -311,7 +500,7 @@ $('cameraInput').addEventListener('change',async e=>{
     const dataUrl=await compressImage(file);
     e.target.value='';
     showOverlay('💾 جارٍ الحفظ...');
-    await addPhoto({dataUrl,lat:pos?pos.lat:null,lng:pos?pos.lng:null,acc:pos?Math.round(pos.acc):null,time:Date.now()});
+    await addPhoto({dataUrl,lat:pos?pos.lat:null,lng:pos?pos.lng:null,acc:pos?Math.round(pos.acc):null,time:Date.now(),rowKey:rowKey||null});
     hideOverlay();
     toast(pos?'✅ تم الحفظ مع الموقع':'⚠️ تم الحفظ (تعذر تحديد الموقع)');
     render();
@@ -323,30 +512,97 @@ $('cameraInput').addEventListener('change',async e=>{
   }
 });
 
+function openLightbox(p){
+  const coord=fmtCoord(p);
+  $('lbImg').src=p.dataUrl;
+  $('lbCoord').textContent=coord?('📍 '+coord):'⚠️ بدون إحداثيات';
+  $('lbTime').textContent=fmtTime(p.time);
+  $('lightbox').classList.add('show');
+}
+
+/* ================== Render table ================== */
+function renderTable(photos){
+  const box=$('tableBox');
+  if(!reportRows.length){ box.classList.remove('show'); return; }
+  box.classList.add('show');
+
+  // آخر صورة لكل صف
+  const last={};
+  photos.forEach(p=>{ if(p.rowKey) last[p.rowKey]=p; });
+  const done=reportRows.filter(r=>last[r.key]).length;
+  $('tableTitle').innerHTML=`📊 ${esc(reportFile)} — البلاغات: <b>${reportRows.length}</b> | تم تصويرها: <b>${done}</b>`;
+
+  const tb=$('tableBody'); tb.innerHTML='';
+  reportRows.forEach(r=>{
+    const p=last[r.key];
+    const tr=document.createElement('tr');
+
+    // موقع البلاغ
+    let locHtml;
+    if(r.lat!=null){
+      locHtml=`<div class="coord-sm"><a href="https://www.google.com/maps?q=${r.lat},${r.lng}" target="_blank">${r.lat.toFixed(6)}, ${r.lng.toFixed(6)}</a></div>`;
+    }else{
+      locHtml=`<div class="warn">⚠️ تعذر استخراج الإحداثيات${isShortLink(r.rawLoc)?'<br>(رابط مختصر)':''}</div>`;
+    }
+
+    // الصورة
+    let photoHtml='';
+    if(p){
+      photoHtml=`<img class="row-img" src="${p.dataUrl}" alt="">
+        ${p.lat!=null?`<div class="coord-sm">${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}</div>`:'<div class="warn">⚠️ بدون إحداثيات</div>'}
+        <div class="time-sm">🕒 ${fmtTime(p.time)}</div>
+        <button class="btn-row again">🔄 إعادة التقاط</button>`;
+    }else{
+      photoHtml=`<button class="btn-row">📸 التقاط صورة</button>`;
+    }
+
+    // الفرق
+    let distHtml='—';
+    if(p && p.lat!=null && r.lat!=null){
+      const m=distM(r.lat,r.lng,p.lat,p.lng);
+      distHtml=`<span class="dist ${distClass(m)}">${fmtDist(m)}</span>`;
+    }
+
+    tr.innerHTML=`
+      <td class="ltr">${esc(r.phone)||'—'}</td>
+      <td class="td-desc">${esc(r.desc)||'—'}</td>
+      <td>${locHtml}</td>
+      <td>${photoHtml}</td>
+      <td>${distHtml}</td>
+      <td><span class="count ${r.count>1?'dup':''}">${r.count}</span></td>`;
+
+    tr.querySelector('.btn-row').addEventListener('click',()=>{
+      captureRowKey=r.key;
+      $('cameraInput').click();
+    });
+    const img=tr.querySelector('.row-img');
+    if(img) img.addEventListener('click',()=>openLightbox(p));
+    tb.appendChild(tr);
+  });
+}
+
 /* ================== Render gallery ================== */
 async function render(){
   let photos=[];
   try{ photos=await getAllPhotos(); }
   catch(err){ console.error(err); toast(explainError(err),6000); }
+  renderTable(photos);
   $('stats').innerHTML=photos.length?`📷 عدد الصور المحفوظة: <b>${photos.length}</b>`:'';
   $('empty').style.display=photos.length?'none':'block';
   $('grid').innerHTML='';
   photos.forEach(p=>{
     const card=document.createElement('div'); card.className='card';
     const coord=fmtCoord(p);
+    const row=p.rowKey?reportRows.find(r=>r.key===p.rowKey):null;
     card.innerHTML=`
       <img src="${p.dataUrl}" alt="">
       <div class="info">
         ${coord?`<div class="coord">📍 ${coord}</div>`:`<div class="no-gps">⚠️ بدون إحداثيات</div>`}
         <div class="time">🕒 ${fmtTime(p.time)}</div>
+        ${row?`<div class="time">📞 <span class="ltr">${esc(row.phone)}</span></div>`:''}
       </div>
       <button class="del">🗑️ حذف</button>`;
-    card.querySelector('img').addEventListener('click',()=>{
-      $('lbImg').src=p.dataUrl;
-      $('lbCoord').textContent=coord?('📍 '+coord):'⚠️ بدون إحداثيات';
-      $('lbTime').textContent=fmtTime(p.time);
-      $('lightbox').classList.add('show');
-    });
+    card.querySelector('img').addEventListener('click',()=>openLightbox(p));
     card.querySelector('.del').addEventListener('click',async()=>{
       if(!confirm('حذف هذه الصورة؟'))return;
       try{ await deletePhoto(p.id); render(); toast('🗑️ تم الحذف'); }
@@ -360,6 +616,13 @@ async function render(){
 $('btnPdf').addEventListener('click',async()=>{
   let photos;
   try{ photos=await getAllPhotos(); }catch(err){ toast(explainError(err),6000); return; }
+  // إذا كان هناك جدول: نأخذ صور صفوف الجدول فقط (آخر صورة لكل صف وبنفس ترتيب الجدول)
+  if(reportRows.length){
+    const last={};
+    photos.forEach(p=>{ if(p.rowKey) last[p.rowKey]=p; });
+    photos=reportRows.map(r=>last[r.key]).filter(Boolean);
+    if(!photos.length){toast('لا توجد صور ملتقطة من صفوف الجدول');return;}
+  }
   if(!photos.length){toast('لا توجد صور للتصدير');return;}
   if(!window.jspdf){toast('⚠️ مكتبة PDF لم تُحمّل (تحقق من الإنترنت أول مرة)');return;}
 
@@ -450,7 +713,7 @@ $('btnPdf').addEventListener('click',async()=>{
   }
 });
 
-/* ================== Clear all ================== */
+/* ================== Clear all photos ================== */
 $('btnClear').addEventListener('click',async()=>{
   if(!confirm('سيتم حذف جميع الصور نهائياً. متابعة؟'))return;
   try{ await clearPhotos(); render(); toast('🗑️ تم مسح جميع الصور'); }
@@ -460,7 +723,15 @@ $('btnClear').addEventListener('click',async()=>{
 /* ================== Init ================== */
 if(navigator.storage&&navigator.storage.persist){ navigator.storage.persist().catch(()=>{}); }
 document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'&&!db) openDB().catch(()=>{}); });
-openDB().then(render).catch(err=>toast('❌ تعذر فتح قاعدة البيانات: '+(err&&err.name||''),6000));
+openDB()
+  .then(async()=>{
+    try{
+      reportRows=(await metaGet('reportRows'))||[];
+      reportFile=(await metaGet('reportFile'))||'';
+    }catch(_){ reportRows=[]; }
+    render();
+  })
+  .catch(err=>toast('❌ تعذر فتح قاعدة البيانات: '+(err&&err.name||''),6000));
 </script>
 </body>
 </html>
