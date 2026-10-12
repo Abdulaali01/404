@@ -17,7 +17,9 @@
   header h1 { font-size:26px; margin-bottom:6px; }
   header p { color:#9fd3e8; font-size:14px; }
 
-  .hood-box { display:flex; justify-content:center; margin:15px 0 5px; }
+  .hood-box {
+    display:flex; justify-content:center; margin:15px 0 5px;
+  }
   .hood-box input {
     width:min(420px, 90%); padding:13px 18px; border-radius:12px;
     border:1px solid rgba(255,255,255,.3); background:rgba(255,255,255,.1);
@@ -44,7 +46,10 @@
   .stats b { color:#38ef7d; }
 
   .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:16px; }
-  .card { background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.15); border-radius:14px; overflow:hidden; backdrop-filter:blur(6px); }
+  .card {
+    background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.15);
+    border-radius:14px; overflow:hidden; backdrop-filter:blur(6px);
+  }
   .card img { width:100%; height:160px; object-fit:cover; display:block; cursor:pointer; }
   .card .info { padding:10px 12px; font-size:13px; line-height:1.7; }
   .coord { direction:ltr; text-align:left; color:#7ef0c1; font-weight:bold; font-size:12.5px; }
@@ -66,8 +71,7 @@
   .lightbox .lb-time { color:#bcd6e2; font-size:13px; margin-top:4px; }
   .lightbox button { margin-top:16px; background:rgba(255,255,255,.15); color:#fff; }
 
-  .toast { position:fixed; bottom:24px; right:50%; transform:translateX(50%); background:#1c3b47; border:1px solid #38ef7d; color:#d9ffe9; padding:12px 22px; border-radius:10px; z-index:70; display:none; font-size:14px; max-width:90%; }
-  .toast.err { border-color:#ef473a; color:#ffd6d2; }
+  .toast { position:fixed; bottom:24px; right:50%; transform:translateX(50%); background:#1c3b47; border:1px solid #38ef7d; color:#d9ffe9; padding:12px 22px; border-radius:10px; z-index:70; display:none; font-size:14px; max-width:90%; text-align:center; }
   .toast.show { display:block; animation:fadein .25s; }
   @keyframes fadein { from{opacity:0; transform:translateX(50%) translateY(10px);} }
 </style>
@@ -111,64 +115,58 @@
 <div class="toast" id="toast"></div>
 
 <script>
-/* ================================================================
-   طبقة التخزين: IndexedDB مع بديل تلقائي localStorage عند الفشل
-   ================================================================ */
+/* ================== IndexedDB (مع إعادة اتصال تلقائي) ================== */
 const DB_NAME='geoPhotosDB', STORE='photos', META='meta';
-let db=null, useLS=false, lsSeq=1;
-const LS_KEY='geoPhotosLS';
-
-function lsLoad(){ try{ return JSON.parse(localStorage.getItem(LS_KEY)||'[]'); }catch(e){ return []; } }
-function lsSave(arr){ localStorage.setItem(LS_KEY, JSON.stringify(arr)); }
+let db=null;
 
 function openDB(){
-  return new Promise((res)=>{
-    let rq;
-    try{ rq=indexedDB.open(DB_NAME,2); }
-    catch(e){ useLS=true; return res(); }
-    rq.onupgradeneeded=e=>{
+  return new Promise((res,rej)=>{
+    const req=indexedDB.open(DB_NAME,2);
+    req.onupgradeneeded=e=>{
       const d=e.target.result;
       if(!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE,{keyPath:'id',autoIncrement:true});
       if(!d.objectStoreNames.contains(META)) d.createObjectStore(META,{keyPath:'key'});
     };
-    rq.onsuccess=e=>{db=e.target.result;res();};
-    rq.onerror=()=>{ useLS=true; res(); };
+    req.onsuccess=e=>{
+      db=e.target.result;
+      db.onclose=()=>{db=null;};
+      db.onversionchange=()=>{try{db.close();}catch(_){} db=null;};
+      res(db);
+    };
+    req.onerror=()=>rej(req.error);
+    req.onblocked=()=>rej(new Error('DB blocked'));
   });
 }
-async function dbAddPhoto(p){
-  if(useLS){ const arr=lsLoad(); p.id=lsSeq++; arr.push(p); lsSave(arr); return; }
-  return new Promise((res,rej)=>{const t=db.transaction(STORE,'readwrite');t.objectStore(STORE).add(p);t.oncomplete=res;t.onerror=()=>rej(new Error('فشل الحفظ في قاعدة بيانات المتصفح'));});
+async function ensureDB(){ if(!db) await openDB(); return db; }
+
+async function withDB(fn){
+  try{
+    await ensureDB();
+    return await fn();
+  }catch(err){
+    if(err && err.name==='QuotaExceededError') throw err;
+    try{ if(db) db.close(); }catch(_){}
+    db=null;
+    await openDB();
+    return await fn();
+  }
 }
-async function dbGetAll(){
-  if(useLS) return lsLoad().sort((a,b)=>a.time-b.time);
-  return new Promise((res,rej)=>{const r=db.transaction(STORE).objectStore(STORE).getAll();r.onsuccess=()=>res((r.result||[]).sort((a,b)=>a.time-b.time));r.onerror=()=>rej(new Error('فشل قراءة الصور'));});
-}
-async function dbDelete(id){
-  if(useLS){ lsSave(lsLoad().filter(p=>p.id!==id)); return; }
-  return new Promise((res,rej)=>{const t=db.transaction(STORE,'readwrite');t.objectStore(STORE).delete(id);t.oncomplete=res;t.onerror=rej;});
-}
-async function dbClear(){
-  if(useLS){ lsSave([]); return; }
-  return new Promise((res,rej)=>{const t=db.transaction(STORE,'readwrite');t.objectStore(STORE).clear();t.oncomplete=res;t.onerror=rej;});
-}
-function metaGet(key){
-  if(useLS) return Promise.resolve(localStorage.getItem('meta_'+key));
-  return new Promise((res)=>{try{const r=db.transaction(META).objectStore(META).get(key);r.onsuccess=()=>res(r.result?r.result.val:null);r.onerror=()=>res(null);}catch(e){res(null);}});
-}
-function metaSet(key,val){
-  if(useLS){ try{localStorage.setItem('meta_'+key,val);}catch(e){} return Promise.resolve(); }
-  return new Promise((res)=>{try{const t=db.transaction(META,'readwrite');t.objectStore(META).put({key,val});t.oncomplete=res;t.onerror=res;}catch(e){res();}});
-}
+function txDone(t){return new Promise((res,rej)=>{t.oncomplete=()=>res();t.onerror=()=>rej(t.error);t.onabort=()=>rej(t.error||new Error('Transaction aborted'));});}
+function reqDone(r){return new Promise((res,rej)=>{r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
+
+function addPhoto(p){return withDB(()=>{const t=db.transaction(STORE,'readwrite');t.objectStore(STORE).add(p);return txDone(t);});}
+function getAllPhotos(){return withDB(async()=>{const r=await reqDone(db.transaction(STORE).objectStore(STORE).getAll());return (r||[]).sort((a,b)=>a.time-b.time);});}
+function deletePhoto(id){return withDB(()=>{const t=db.transaction(STORE,'readwrite');t.objectStore(STORE).delete(id);return txDone(t);});}
+function clearPhotos(){return withDB(()=>{const t=db.transaction(STORE,'readwrite');t.objectStore(STORE).clear();return txDone(t);});}
+function metaGet(key){return withDB(async()=>{const r=await reqDone(db.transaction(META).objectStore(META).get(key));return r?r.val:null;});}
+function metaSet(key,val){return withDB(()=>{const t=db.transaction(META,'readwrite');t.objectStore(META).put({key,val});return txDone(t);});}
 
 /* ================== Helpers ================== */
 const $=id=>document.getElementById(id);
 function showOverlay(t){$('overlayText').textContent=t;$('overlay').classList.add('show');}
 function hideOverlay(){$('overlay').classList.remove('show');}
 let toastTimer=null;
-function toast(msg,isErr){
-  const t=$('toast'); t.textContent=msg; t.className='toast show'+(isErr?' err':'');
-  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),5000);
-}
+function toast(msg,ms=3000){const t=$('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),ms);}
 function fmtTime(ts){return new Date(ts).toLocaleString('ar-SA',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});}
 function fmtTimeNum(ts){const d=new Date(ts);const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())} - ${p(d.getHours())}:${p(d.getMinutes())}`;}
 function fmtCoord(p){
@@ -176,7 +174,13 @@ function fmtCoord(p){
   const la=p.lat>=0?'N':'S', lo=p.lng>=0?'E':'W';
   return `${Math.abs(p.lat).toFixed(6)}° ${la}, ${Math.abs(p.lng).toFixed(6)}° ${lo}`;
 }
-function errMsg(e){ return (e && e.message) ? e.message : String(e); }
+function explainError(err){
+  const n=err&&err.name||'', m=err&&err.message||String(err);
+  if(n==='QuotaExceededError') return '❌ مساحة التخزين ممتلئة — احذف بعض الصور أو صدّرها PDF ثم امسحها';
+  if(m.startsWith('IMG')) return '❌ تعذر قراءة الصورة — جرّب تصويرها مرة أخرى';
+  if(n==='InvalidStateError'||m.includes('closing')) return '❌ انقطع اتصال التخزين — أعد المحاولة';
+  return '❌ حدث خطأ أثناء الحفظ: '+(n||m);
+}
 
 /* ================== Arabic reshaper ================== */
 const AR_DUAL={'ب':[0xFE8F,0xFE90,0xFE91,0xFE92],'ت':[0xFE95,0xFE96,0xFE97,0xFE98],'ث':[0xFE99,0xFE9A,0xFE9B,0xFE9C],'ج':[0xFE9D,0xFE9E,0xFE9F,0xFEA0],'ح':[0xFEA1,0xFEA2,0xFEA3,0xFEA4],'خ':[0xFEA5,0xFEA6,0xFEA7,0xFEA8],'س':[0xFEB1,0xFEB2,0xFEB3,0xFEB4],'ش':[0xFEB5,0xFEB6,0xFEB7,0xFEB8],'ص':[0xFEB9,0xFEBA,0xFEBB,0xFEBC],'ض':[0xFEBD,0xFEBE,0xFEBF,0xFEC0],'ط':[0xFEC1,0xFEC2,0xFEC3,0xFEC4],'ظ':[0xFEC5,0xFEC6,0xFEC7,0xFEC8],'ع':[0xFEC9,0xFECA,0xFECB,0xFECC],'غ':[0xFECD,0xFECE,0xFECF,0xFED0],'ف':[0xFED1,0xFED2,0xFED3,0xFED4],'ق':[0xFED5,0xFED6,0xFED7,0xFED8],'ك':[0xFED9,0xFEDA,0xFEDB,0xFEDC],'ل':[0xFEDD,0xFEDE,0xFEDF,0xFEE0],'م':[0xFEE1,0xFEE2,0xFEE3,0xFEE4],'ن':[0xFEE5,0xFEE6,0xFEE7,0xFEE8],'ه':[0xFEE9,0xFEEA,0xFEEB,0xFEEC],'ي':[0xFEF1,0xFEF2,0xFEF3,0xFEF4],'ئ':[0xFE89,0xFE8A,0xFE8B,0xFE8C]};
@@ -223,14 +227,14 @@ function abToB64(buf){
 }
 async function loadArabicFont(doc){
   try{
-    if(!fontB64){ fontB64=await metaGet('arabicFont'); }
+    if(!fontB64){ fontB64=await metaGet('arabicFont').catch(()=>null); }
     if(!fontB64){
       for(const url of FONT_URLS){
         try{
           const r=await fetch(url);
           if(!r.ok) continue;
           fontB64=abToB64(await r.arrayBuffer());
-          metaSet('arabicFont',fontB64);
+          metaSet('arabicFont',fontB64).catch(()=>{});
           break;
         }catch(e){}
       }
@@ -238,6 +242,7 @@ async function loadArabicFont(doc){
     if(!fontB64) return false;
     doc.addFileToVFS('ArabicFont.ttf',fontB64);
     doc.addFont('ArabicFont.ttf','ArabicFont','normal');
+    doc.setFont('ArabicFont');
     return true;
   }catch(e){ return false; }
 }
@@ -255,61 +260,77 @@ function getPosition(){
 }
 
 /* ================== Image processing ================== */
-function compressImage(file,maxDim=1400,quality=0.85){
+function drawToJpeg(src,w0,h0,maxDim,quality){
+  const scale=Math.min(1,maxDim/Math.max(w0,h0));
+  const w=Math.max(1,Math.round(w0*scale)), h=Math.max(1,Math.round(h0*scale));
+  const c=document.createElement('canvas');
+  c.width=w; c.height=h;
+  const ctx=c.getContext('2d');
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,w,h);
+  ctx.drawImage(src,0,0,w,h);
+  const out=c.toDataURL('image/jpeg',quality);
+  c.width=c.height=0;
+  if(!out||out.length<100) throw new Error('IMG encode failed');
+  return out;
+}
+function loadViaImgTag(file){
   return new Promise((res,rej)=>{
     const img=new Image();
     const url=URL.createObjectURL(file);
-    img.onload=()=>{
-      try{
-        let w=img.width,h=img.height;
-        const scale=Math.min(1,maxDim/Math.max(w,h));
-        w=Math.round(w*scale); h=Math.round(h*scale);
-        const c=document.createElement('canvas');
-        c.width=w; c.height=h;
-        c.getContext('2d').drawImage(img,0,0,w,h);
-        URL.revokeObjectURL(url);
-        res(c.toDataURL('image/jpeg',quality));
-      }catch(e){ URL.revokeObjectURL(url); rej(e); }
-    };
-    img.onerror=()=>{ URL.revokeObjectURL(url); rej(new Error('تعذر قراءة الصورة')); };
+    img.onload=()=>{URL.revokeObjectURL(url);res(img);};
+    img.onerror=()=>{URL.revokeObjectURL(url);rej(new Error('IMG decode failed'));};
     img.src=url;
   });
+}
+async function compressImage(file,maxDim=1400,quality=0.82){
+  if(!file||!file.size) throw new Error('IMG empty file');
+  if(window.createImageBitmap){
+    try{
+      const bmp=await createImageBitmap(file,{imageOrientation:'from-image'});
+      try{ return drawToJpeg(bmp,bmp.width,bmp.height,maxDim,quality); }
+      finally{ bmp.close&&bmp.close(); }
+    }catch(e){}
+  }
+  const img=await loadViaImgTag(file);
+  return drawToJpeg(img,img.naturalWidth||img.width,img.naturalHeight||img.height,maxDim,quality);
 }
 
 /* ================== الحي ================== */
 const hoodInput=$('hoodInput');
-hoodInput.value=localStorage.getItem('hood')||'';
-hoodInput.addEventListener('input',()=>localStorage.setItem('hood',hoodInput.value.trim()));
+try{ hoodInput.value=localStorage.getItem('hood')||''; }catch(_){}
+hoodInput.addEventListener('input',()=>{try{localStorage.setItem('hood',hoodInput.value.trim());}catch(_){}});
 const getHood=()=>hoodInput.value.trim();
 
-/* ================== Capture ================== */
+/* ================== Capture flow ================== */
 $('btnCamera').addEventListener('click',()=>{$('cameraInput').click();});
 $('cameraInput').addEventListener('change',async e=>{
   const file=e.target.files[0];
-  e.target.value='';
-  if(!file) return;
+  if(!file){ e.target.value=''; return; }
   try{
     showOverlay('📍 جارٍ تحديد الموقع...');
     const pos=await getPosition();
     showOverlay('🖼️ جارٍ معالجة الصورة...');
     const dataUrl=await compressImage(file);
+    e.target.value='';
     showOverlay('💾 جارٍ الحفظ...');
-    await dbAddPhoto({dataUrl,lat:pos?pos.lat:null,lng:pos?pos.lng:null,acc:pos?Math.round(pos.acc):null,time:Date.now()});
+    await addPhoto({dataUrl,lat:pos?pos.lat:null,lng:pos?pos.lng:null,acc:pos?Math.round(pos.acc):null,time:Date.now()});
     hideOverlay();
     toast(pos?'✅ تم الحفظ مع الموقع':'⚠️ تم الحفظ (تعذر تحديد الموقع)');
     render();
   }catch(err){
+    console.error(err);
+    e.target.value='';
     hideOverlay();
-    toast('❌ خطأ: '+errMsg(err), true);
+    toast(explainError(err),6000);
   }
 });
 
 /* ================== Render gallery ================== */
 async function render(){
-  let photos;
-  try{ photos=await dbGetAll(); }
-  catch(e){ toast('❌ خطأ في قراءة الصور: '+errMsg(e), true); return; }
-  $('stats').innerHTML=photos.length?`📷 عدد الصور المحفوظة: <b>${photos.length}</b>${useLS?' <small>(وضع الحفظ الاحتياطي)</small>':''}`:'';
+  let photos=[];
+  try{ photos=await getAllPhotos(); }
+  catch(err){ console.error(err); toast(explainError(err),6000); }
+  $('stats').innerHTML=photos.length?`📷 عدد الصور المحفوظة: <b>${photos.length}</b>`:'';
   $('empty').style.display=photos.length?'none':'block';
   $('grid').innerHTML='';
   photos.forEach(p=>{
@@ -330,7 +351,8 @@ async function render(){
     });
     card.querySelector('.del').addEventListener('click',async()=>{
       if(!confirm('حذف هذه الصورة؟'))return;
-      await dbDelete(p.id); render(); toast('🗑️ تم الحذف');
+      try{ await deletePhoto(p.id); render(); toast('🗑️ تم الحذف'); }
+      catch(err){ toast(explainError(err),6000); }
     });
     $('grid').appendChild(card);
   });
@@ -339,18 +361,15 @@ async function render(){
 /* ================== PDF Export ================== */
 $('btnPdf').addEventListener('click',async()=>{
   let photos;
-  try{ photos=await dbGetAll(); }
-  catch(e){ toast('❌ خطأ في قراءة الصور: '+errMsg(e), true); return; }
+  try{ photos=await getAllPhotos(); }catch(err){ toast(explainError(err),6000); return; }
   if(!photos.length){toast('لا توجد صور للتصدير');return;}
-  if(!window.jspdf){toast('⚠️ مكتبة PDF لم تُحمّل (تحقق من الإنترنت أول مرة)', true);return;}
+  if(!window.jspdf){toast('⚠️ مكتبة PDF لم تُحمّل (تحقق من الإنترنت أول مرة)');return;}
 
   const hood=getHood();
   showOverlay('🔤 جارٍ تحميل الخط العربي...');
   const {jsPDF}=window.jspdf;
   const doc=new jsPDF({unit:'mm',format:'a4',orientation:'portrait'});
   const arabicOK=await loadArabicFont(doc);
-  // دالة مساعدة: ضبط الخط بشكل صريح (بدون undefined أبداً)
-  const F=(isAr)=>doc.setFont(isAr?'ArabicFont':'helvetica','normal');
 
   try{
     showOverlay('📄 جارٍ إنشاء ملف PDF...');
@@ -373,62 +392,62 @@ $('btnPdf').addEventListener('click',async()=>{
       doc.setDrawColor(180); doc.setLineWidth(0.3);
       doc.rect(x,y,cellW,cellH);
 
-      // 1) الإحداثيات
       const coord=fmtCoord(p);
-      doc.setFont('helvetica','bold'); doc.setFontSize(9.5); doc.setTextColor(0);
-      if(coord){ doc.text(`Lat/Lng: ${coord}`, x+cellW/2, y+imgH+4.5, {align:'center'}); }
-      else{ doc.setTextColor(200,0,0); doc.text('GPS: Not available', x+cellW/2, y+imgH+4.5, {align:'center'}); doc.setTextColor(0); }
-
-      // 2) التاريخ والوقت (خط عربي إن توفر)
       const timeTxt=arabicOK?AR(fmtTime(p.time)):fmtTimeNum(p.time);
-      F(arabicOK); doc.setFontSize(8); doc.setTextColor(90);
-      doc.text(timeTxt, x+cellW/2, y+imgH+10.5, {align:'center'});
+      doc.setFont(arabicOK?'ArabicFont':'helvetica');
+      doc.setFontSize(9.5); doc.setTextColor(0);
+      if(coord){
+        doc.setFont(undefined,'bold');
+        doc.text(`Lat/Lng: ${coord}`, x+cellW/2, y+imgH+4.5, {align:'center'});
+      }else{
+        doc.setFont(undefined,'bold'); doc.setTextColor(200,0,0);
+        doc.text('GPS: Not available', x+cellW/2, y+imgH+4.5, {align:'center'});
+        doc.setTextColor(0);
+      }
+      doc.setFont(undefined,'normal'); doc.setFontSize(8); doc.setTextColor(90);
+      doc.text(timeTxt, x+cellW/2, y+imgH+10, {align:'center'});
 
-      // 3) رابط الصورة
       const shortUrl = p.dataUrl.length>52 ? p.dataUrl.slice(0,52)+'...' : p.dataUrl;
-      doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(0,80,200);
-      doc.textWithLink(shortUrl, x+cellW/2, y+imgH+16, {align:'center', url:p.dataUrl});
+      doc.setFont('helvetica'); doc.setFontSize(7); doc.setTextColor(0,80,200);
+      doc.textWithLink(shortUrl, x+cellW/2, y+imgH+15.5, {align:'center', url:p.dataUrl});
 
-      // 4) رابط خرائط Google
       if(coord){
         doc.setFontSize(7.5); doc.setTextColor(0,130,60);
-        doc.textWithLink('Open in Google Maps', x+cellW/2, y+imgH+21.5,
+        doc.textWithLink('Open in Google Maps', x+cellW/2, y+imgH+21,
           {align:'center', url:`https://www.google.com/maps?q=${p.lat},${p.lng}`});
       }
 
-      // الصورة نفسها قابلة للنقر
       doc.link(x, y, cellW, imgH, {url: p.dataUrl});
 
-      // رقم الصورة
-      doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(150);
+      doc.setFontSize(8); doc.setTextColor(150);
       doc.text(`#${i+1}`, x+2.5, y+4);
     });
 
-    // العنوان + أرقام الصفحات
     const total=Math.ceil(photos.length/4);
     const titleTxt = arabicOK ? AR('تقرير الصور') : 'Photos Report';
     const hoodTxt  = arabicOK ? AR('الحي: '+(hood||'—')) : ('Hood: '+(hood||'-'));
     const dateTxt  = arabicOK ? AR('تاريخ الإصدار: '+fmtTime(Date.now())) : ('Issued: '+fmtTimeNum(Date.now()));
     for(let pg=1;pg<=total;pg++){
       doc.setPage(pg);
-      F(arabicOK); doc.setFontSize(15); doc.setTextColor(15,60,80);
+      doc.setFont(arabicOK?'ArabicFont':'helvetica');
+      doc.setFontSize(15); doc.setTextColor(15,60,80);
       doc.text(titleTxt, pageW/2, margin+6, {align:'center'});
-      F(arabicOK); doc.setFontSize(10.5); doc.setTextColor(60);
+      doc.setFontSize(10.5); doc.setTextColor(60);
       doc.text(hoodTxt, pageW-margin, margin+13, {align:'right'});
-      F(arabicOK); doc.setFontSize(9);
+      doc.setFont('helvetica'); doc.setFontSize(9);
       doc.text(dateTxt, margin, margin+13, {align:'left'});
       doc.setDrawColor(15,60,80); doc.setLineWidth(0.6);
       doc.line(margin, gridTop-4, pageW-margin, gridTop-4);
-      doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(120);
+      doc.setFontSize(9); doc.setTextColor(120);
       doc.text(`Page ${pg} / ${total}`, pageW/2, pageH-5, {align:'center'});
     }
 
     const fname=(hood?hood.replace(/[\\/:*?"<>|]/g,'-')+'-':'')+'تقرير-الصور.pdf';
     doc.save(fname);
-    toast(arabicOK?'✅ تم تصدير PDF بالعربية':'⚠️ تم التصدير بدون خط عربي (الإنترنت غير متوفر عند أول تصدير)');
+    toast(arabicOK?'✅ تم تصدير PDF بالعربية':'✅ تم التصدير (بدون خط عربي)');
   }catch(err){
     console.error(err);
-    toast('❌ فشل إنشاء PDF: '+errMsg(err), true);
+    toast('❌ فشل إنشاء PDF');
   }finally{
     hideOverlay();
   }
@@ -437,15 +456,14 @@ $('btnPdf').addEventListener('click',async()=>{
 /* ================== Clear all ================== */
 $('btnClear').addEventListener('click',async()=>{
   if(!confirm('سيتم حذف جميع الصور نهائياً. متابعة؟'))return;
-  await dbClear(); render();
-  toast('🗑️ تم مسح جميع الصور');
+  try{ await clearPhotos(); render(); toast('🗑️ تم مسح جميع الصور'); }
+  catch(err){ toast(explainError(err),6000); }
 });
 
 /* ================== Init ================== */
-openDB().then(async()=>{
-  if(useLS){ lsSeq = lsLoad().reduce((m,p)=>Math.max(m,p.id||0),0)+1; }
-  render();
-}).catch(()=>{ useLS=true; render(); });
+if(navigator.storage&&navigator.storage.persist){ navigator.storage.persist().catch(()=>{}); }
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible'&&!db) openDB().catch(()=>{}); });
+openDB().then(render).catch(err=>toast('❌ تعذر فتح قاعدة البيانات: '+(err&&err.name||''),6000));
 </script>
 </body>
 </html>
