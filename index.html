@@ -17,9 +17,7 @@
   header h1 { font-size:26px; margin-bottom:6px; }
   header p { color:#9fd3e8; font-size:14px; }
 
-  .hood-box {
-    display:flex; justify-content:center; margin:15px 0 5px;
-  }
+  .hood-box { display:flex; justify-content:center; margin:15px 0 5px; }
   .hood-box input {
     width:min(420px, 90%); padding:13px 18px; border-radius:12px;
     border:1px solid rgba(255,255,255,.3); background:rgba(255,255,255,.1);
@@ -46,10 +44,7 @@
   .stats b { color:#38ef7d; }
 
   .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:16px; }
-  .card {
-    background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.15);
-    border-radius:14px; overflow:hidden; backdrop-filter:blur(6px);
-  }
+  .card { background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.15); border-radius:14px; overflow:hidden; backdrop-filter:blur(6px); }
   .card img { width:100%; height:160px; object-fit:cover; display:block; cursor:pointer; }
   .card .info { padding:10px 12px; font-size:13px; line-height:1.7; }
   .coord { direction:ltr; text-align:left; color:#7ef0c1; font-weight:bold; font-size:12.5px; }
@@ -71,7 +66,8 @@
   .lightbox .lb-time { color:#bcd6e2; font-size:13px; margin-top:4px; }
   .lightbox button { margin-top:16px; background:rgba(255,255,255,.15); color:#fff; }
 
-  .toast { position:fixed; bottom:24px; right:50%; transform:translateX(50%); background:#1c3b47; border:1px solid #38ef7d; color:#d9ffe9; padding:12px 22px; border-radius:10px; z-index:70; display:none; font-size:14px; }
+  .toast { position:fixed; bottom:24px; right:50%; transform:translateX(50%); background:#1c3b47; border:1px solid #38ef7d; color:#d9ffe9; padding:12px 22px; border-radius:10px; z-index:70; display:none; font-size:14px; max-width:90%; }
+  .toast.err { border-color:#ef473a; color:#ffd6d2; }
   .toast.show { display:block; animation:fadein .25s; }
   @keyframes fadein { from{opacity:0; transform:translateX(50%) translateY(10px);} }
 </style>
@@ -115,36 +111,64 @@
 <div class="toast" id="toast"></div>
 
 <script>
-/* ================== IndexedDB ================== */
+/* ================================================================
+   طبقة التخزين: IndexedDB مع بديل تلقائي localStorage عند الفشل
+   ================================================================ */
 const DB_NAME='geoPhotosDB', STORE='photos', META='meta';
-let db=null;
+let db=null, useLS=false, lsSeq=1;
+const LS_KEY='geoPhotosLS';
+
+function lsLoad(){ try{ return JSON.parse(localStorage.getItem(LS_KEY)||'[]'); }catch(e){ return []; } }
+function lsSave(arr){ localStorage.setItem(LS_KEY, JSON.stringify(arr)); }
 
 function openDB(){
-  return new Promise((res,rej)=>{
-    const req=indexedDB.open(DB_NAME,2);
-    req.onupgradeneeded=e=>{
+  return new Promise((res)=>{
+    let rq;
+    try{ rq=indexedDB.open(DB_NAME,2); }
+    catch(e){ useLS=true; return res(); }
+    rq.onupgradeneeded=e=>{
       const d=e.target.result;
       if(!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE,{keyPath:'id',autoIncrement:true});
       if(!d.objectStoreNames.contains(META)) d.createObjectStore(META,{keyPath:'key'});
     };
-    req.onsuccess=e=>{db=e.target.result;res();};
-    req.onerror=rej;
+    rq.onsuccess=e=>{db=e.target.result;res();};
+    rq.onerror=()=>{ useLS=true; res(); };
   });
 }
-function tx(store,mode){return db.transaction(store,mode).objectStore(store);}
-function addPhoto(p){return new Promise((res,rej)=>{const t=db.transaction(STORE,'readwrite');t.objectStore(STORE).add(p);t.oncomplete=res;t.onerror=rej;});}
-function getAllPhotos(){return new Promise((res,rej)=>{const r=tx(STORE).getAll();r.onsuccess=()=>res((r.result||[]).sort((a,b)=>a.time-b.time));r.onerror=rej;});}
-function deletePhoto(id){return new Promise((res,rej)=>{const t=db.transaction(STORE,'readwrite');t.objectStore(STORE).delete(id);t.oncomplete=res;t.onerror=rej;});}
-function clearPhotos(){return new Promise((res,rej)=>{const t=db.transaction(STORE,'readwrite');t.objectStore(STORE).clear();t.oncomplete=res;t.onerror=rej;});}
-function metaGet(key){return new Promise((res,rej)=>{const r=tx(META).get(key);r.onsuccess=()=>res(r.result?r.result.val:null);r.onerror=rej;});}
-function metaSet(key,val){return new Promise((res,rej)=>{const t=db.transaction(META,'readwrite');t.objectStore(META).put({key,val});t.oncomplete=res;t.onerror=rej;});}
+async function dbAddPhoto(p){
+  if(useLS){ const arr=lsLoad(); p.id=lsSeq++; arr.push(p); lsSave(arr); return; }
+  return new Promise((res,rej)=>{const t=db.transaction(STORE,'readwrite');t.objectStore(STORE).add(p);t.oncomplete=res;t.onerror=()=>rej(new Error('فشل الحفظ في قاعدة بيانات المتصفح'));});
+}
+async function dbGetAll(){
+  if(useLS) return lsLoad().sort((a,b)=>a.time-b.time);
+  return new Promise((res,rej)=>{const r=db.transaction(STORE).objectStore(STORE).getAll();r.onsuccess=()=>res((r.result||[]).sort((a,b)=>a.time-b.time));r.onerror=()=>rej(new Error('فشل قراءة الصور'));});
+}
+async function dbDelete(id){
+  if(useLS){ lsSave(lsLoad().filter(p=>p.id!==id)); return; }
+  return new Promise((res,rej)=>{const t=db.transaction(STORE,'readwrite');t.objectStore(STORE).delete(id);t.oncomplete=res;t.onerror=rej;});
+}
+async function dbClear(){
+  if(useLS){ lsSave([]); return; }
+  return new Promise((res,rej)=>{const t=db.transaction(STORE,'readwrite');t.objectStore(STORE).clear();t.oncomplete=res;t.onerror=rej;});
+}
+function metaGet(key){
+  if(useLS) return Promise.resolve(localStorage.getItem('meta_'+key));
+  return new Promise((res)=>{try{const r=db.transaction(META).objectStore(META).get(key);r.onsuccess=()=>res(r.result?r.result.val:null);r.onerror=()=>res(null);}catch(e){res(null);}});
+}
+function metaSet(key,val){
+  if(useLS){ try{localStorage.setItem('meta_'+key,val);}catch(e){} return Promise.resolve(); }
+  return new Promise((res)=>{try{const t=db.transaction(META,'readwrite');t.objectStore(META).put({key,val});t.oncomplete=res;t.onerror=res;}catch(e){res();}});
+}
 
 /* ================== Helpers ================== */
 const $=id=>document.getElementById(id);
 function showOverlay(t){$('overlayText').textContent=t;$('overlay').classList.add('show');}
 function hideOverlay(){$('overlay').classList.remove('show');}
 let toastTimer=null;
-function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),3000);}
+function toast(msg,isErr){
+  const t=$('toast'); t.textContent=msg; t.className='toast show'+(isErr?' err':'');
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),5000);
+}
 function fmtTime(ts){return new Date(ts).toLocaleString('ar-SA',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});}
 function fmtTimeNum(ts){const d=new Date(ts);const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())} - ${p(d.getHours())}:${p(d.getMinutes())}`;}
 function fmtCoord(p){
@@ -152,8 +176,9 @@ function fmtCoord(p){
   const la=p.lat>=0?'N':'S', lo=p.lng>=0?'E':'W';
   return `${Math.abs(p.lat).toFixed(6)}° ${la}, ${Math.abs(p.lng).toFixed(6)}° ${lo}`;
 }
+function errMsg(e){ return (e && e.message) ? e.message : String(e); }
 
-/* ================== Arabic reshaper (اتصال الحروف) ================== */
+/* ================== Arabic reshaper ================== */
 const AR_DUAL={'ب':[0xFE8F,0xFE90,0xFE91,0xFE92],'ت':[0xFE95,0xFE96,0xFE97,0xFE98],'ث':[0xFE99,0xFE9A,0xFE9B,0xFE9C],'ج':[0xFE9D,0xFE9E,0xFE9F,0xFEA0],'ح':[0xFEA1,0xFEA2,0xFEA3,0xFEA4],'خ':[0xFEA5,0xFEA6,0xFEA7,0xFEA8],'س':[0xFEB1,0xFEB2,0xFEB3,0xFEB4],'ش':[0xFEB5,0xFEB6,0xFEB7,0xFEB8],'ص':[0xFEB9,0xFEBA,0xFEBB,0xFEBC],'ض':[0xFEBD,0xFEBE,0xFEBF,0xFEC0],'ط':[0xFEC1,0xFEC2,0xFEC3,0xFEC4],'ظ':[0xFEC5,0xFEC6,0xFEC7,0xFEC8],'ع':[0xFEC9,0xFECA,0xFECB,0xFECC],'غ':[0xFECD,0xFECE,0xFECF,0xFED0],'ف':[0xFED1,0xFED2,0xFED3,0xFED4],'ق':[0xFED5,0xFED6,0xFED7,0xFED8],'ك':[0xFED9,0xFEDA,0xFEDB,0xFEDC],'ل':[0xFEDD,0xFEDE,0xFEDF,0xFEE0],'م':[0xFEE1,0xFEE2,0xFEE3,0xFEE4],'ن':[0xFEE5,0xFEE6,0xFEE7,0xFEE8],'ه':[0xFEE9,0xFEEA,0xFEEB,0xFEEC],'ي':[0xFEF1,0xFEF2,0xFEF3,0xFEF4],'ئ':[0xFE89,0xFE8A,0xFE8B,0xFE8C]};
 const AR_RIGHT={'ء':[0xFE80],'آ':[0xFE81,0xFE82],'أ':[0xFE83,0xFE84],'ؤ':[0xFE85,0xFE86],'إ':[0xFE87,0xFE88],'ا':[0xFE8D,0xFE8E],'ة':[0xFE93,0xFE94],'د':[0xFEA9,0xFEAA],'ذ':[0xFEAB,0xFEAC],'ر':[0xFEAD,0xFEAE],'ز':[0xFEAF,0xFEB0],'و':[0xFEED,0xFEEE],'ى':[0xFEEF,0xFEF0]};
 const AR_LIG={'لا':[0xFEFB,0xFEFC],'لأ':[0xFEF7,0xFEF8],'لإ':[0xFEF9,0xFEFA],'لآ':[0xFEF5,0xFEF6]};
@@ -162,9 +187,8 @@ function reshapeArabic(str){
   const chars=[...String(str)]; let out='';
   for(let i=0;i<chars.length;i++){
     const ch=chars[i];
-    // لا ومتشابهاتها
     if(ch==='ل'&&i+1<chars.length&&AR_LIG['ل'+chars[i+1]]){
-      const prev=i>0&&isAr(chars[i-1])&&AR_DUAL[chars[i-1]]; // هل الحرف السابق يتصل بما بعده؟
+      const prev=i>0&&isAr(chars[i-1])&&AR_DUAL[chars[i-1]];
       out+=String.fromCodePoint(AR_LIG['ل'+chars[i+1]][prev?1:0]); i++; continue;
     }
     if(AR_DUAL[ch]){
@@ -206,7 +230,7 @@ async function loadArabicFont(doc){
           const r=await fetch(url);
           if(!r.ok) continue;
           fontB64=abToB64(await r.arrayBuffer());
-          metaSet('arabicFont',fontB64).catch(()=>{}); // cache للعمل لاحقاً بدون إنترنت
+          metaSet('arabicFont',fontB64);
           break;
         }catch(e){}
       }
@@ -214,7 +238,6 @@ async function loadArabicFont(doc){
     if(!fontB64) return false;
     doc.addFileToVFS('ArabicFont.ttf',fontB64);
     doc.addFont('ArabicFont.ttf','ArabicFont','normal');
-    doc.setFont('ArabicFont');
     return true;
   }catch(e){ return false; }
 }
@@ -237,27 +260,29 @@ function compressImage(file,maxDim=1400,quality=0.85){
     const img=new Image();
     const url=URL.createObjectURL(file);
     img.onload=()=>{
-      let w=img.width,h=img.height;
-      const scale=Math.min(1,maxDim/Math.max(w,h));
-      w=Math.round(w*scale); h=Math.round(h*scale);
-      const c=document.createElement('canvas');
-      c.width=w; c.height=h;
-      c.getContext('2d').drawImage(img,0,0,w,h);
-      URL.revokeObjectURL(url);
-      res(c.toDataURL('image/jpeg',quality));
+      try{
+        let w=img.width,h=img.height;
+        const scale=Math.min(1,maxDim/Math.max(w,h));
+        w=Math.round(w*scale); h=Math.round(h*scale);
+        const c=document.createElement('canvas');
+        c.width=w; c.height=h;
+        c.getContext('2d').drawImage(img,0,0,w,h);
+        URL.revokeObjectURL(url);
+        res(c.toDataURL('image/jpeg',quality));
+      }catch(e){ URL.revokeObjectURL(url); rej(e); }
     };
-    img.onerror=rej;
+    img.onerror=()=>{ URL.revokeObjectURL(url); rej(new Error('تعذر قراءة الصورة')); };
     img.src=url;
   });
 }
 
-/* ================== الحي (Neighborhood) ================== */
+/* ================== الحي ================== */
 const hoodInput=$('hoodInput');
 hoodInput.value=localStorage.getItem('hood')||'';
 hoodInput.addEventListener('input',()=>localStorage.setItem('hood',hoodInput.value.trim()));
 const getHood=()=>hoodInput.value.trim();
 
-/* ================== Capture flow ================== */
+/* ================== Capture ================== */
 $('btnCamera').addEventListener('click',()=>{$('cameraInput').click();});
 $('cameraInput').addEventListener('change',async e=>{
   const file=e.target.files[0];
@@ -269,17 +294,22 @@ $('cameraInput').addEventListener('change',async e=>{
     showOverlay('🖼️ جارٍ معالجة الصورة...');
     const dataUrl=await compressImage(file);
     showOverlay('💾 جارٍ الحفظ...');
-    await addPhoto({dataUrl,lat:pos?pos.lat:null,lng:pos?pos.lng:null,acc:pos?Math.round(pos.acc):null,time:Date.now()});
+    await dbAddPhoto({dataUrl,lat:pos?pos.lat:null,lng:pos?pos.lng:null,acc:pos?Math.round(pos.acc):null,time:Date.now()});
     hideOverlay();
     toast(pos?'✅ تم الحفظ مع الموقع':'⚠️ تم الحفظ (تعذر تحديد الموقع)');
     render();
-  }catch(err){ hideOverlay(); toast('❌ حدث خطأ أثناء الحفظ'); }
+  }catch(err){
+    hideOverlay();
+    toast('❌ خطأ: '+errMsg(err), true);
+  }
 });
 
 /* ================== Render gallery ================== */
 async function render(){
-  const photos=await getAllPhotos();
-  $('stats').innerHTML=photos.length?`📷 عدد الصور المحفوظة: <b>${photos.length}</b>`:'';
+  let photos;
+  try{ photos=await dbGetAll(); }
+  catch(e){ toast('❌ خطأ في قراءة الصور: '+errMsg(e), true); return; }
+  $('stats').innerHTML=photos.length?`📷 عدد الصور المحفوظة: <b>${photos.length}</b>${useLS?' <small>(وضع الحفظ الاحتياطي)</small>':''}`:'';
   $('empty').style.display=photos.length?'none':'block';
   $('grid').innerHTML='';
   photos.forEach(p=>{
@@ -300,23 +330,27 @@ async function render(){
     });
     card.querySelector('.del').addEventListener('click',async()=>{
       if(!confirm('حذف هذه الصورة؟'))return;
-      await deletePhoto(p.id); render(); toast('🗑️ تم الحذف');
+      await dbDelete(p.id); render(); toast('🗑️ تم الحذف');
     });
     $('grid').appendChild(card);
   });
 }
 
-/* ================== PDF Export (4 per page + Arabic) ================== */
+/* ================== PDF Export ================== */
 $('btnPdf').addEventListener('click',async()=>{
-  const photos=await getAllPhotos();
+  let photos;
+  try{ photos=await dbGetAll(); }
+  catch(e){ toast('❌ خطأ في قراءة الصور: '+errMsg(e), true); return; }
   if(!photos.length){toast('لا توجد صور للتصدير');return;}
-  if(!window.jspdf){toast('⚠️ مكتبة PDF لم تُحمّل (تحقق من الإنترنت أول مرة)');return;}
+  if(!window.jspdf){toast('⚠️ مكتبة PDF لم تُحمّل (تحقق من الإنترنت أول مرة)', true);return;}
 
   const hood=getHood();
   showOverlay('🔤 جارٍ تحميل الخط العربي...');
   const {jsPDF}=window.jspdf;
   const doc=new jsPDF({unit:'mm',format:'a4',orientation:'portrait'});
   const arabicOK=await loadArabicFont(doc);
+  // دالة مساعدة: ضبط الخط بشكل صريح (بدون undefined أبداً)
+  const F=(isAr)=>doc.setFont(isAr?'ArabicFont':'helvetica','normal');
 
   try{
     showOverlay('📄 جارٍ إنشاء ملف PDF...');
@@ -335,37 +369,30 @@ $('btnPdf').addEventListener('click',async()=>{
       const x=margin+col*(cellW+gap);
       const y=gridTop+row*(cellH+gap);
 
-      // الصورة
       doc.addImage(p.dataUrl,'JPEG',x,y,cellW,imgH);
-      // الإطار
       doc.setDrawColor(180); doc.setLineWidth(0.3);
       doc.rect(x,y,cellW,cellH);
 
-      // الإحداثيات والتاريخ
+      // 1) الإحداثيات
       const coord=fmtCoord(p);
+      doc.setFont('helvetica','bold'); doc.setFontSize(9.5); doc.setTextColor(0);
+      if(coord){ doc.text(`Lat/Lng: ${coord}`, x+cellW/2, y+imgH+4.5, {align:'center'}); }
+      else{ doc.setTextColor(200,0,0); doc.text('GPS: Not available', x+cellW/2, y+imgH+4.5, {align:'center'}); doc.setTextColor(0); }
+
+      // 2) التاريخ والوقت (خط عربي إن توفر)
       const timeTxt=arabicOK?AR(fmtTime(p.time)):fmtTimeNum(p.time);
-      doc.setFont(arabicOK?'ArabicFont':'helvetica');
-      doc.setFontSize(9.5); doc.setTextColor(0);
-      if(coord){
-        doc.setFont(undefined,'bold');
-        doc.text(`Lat/Lng: ${coord}`, x+cellW/2, y+imgH+4.5, {align:'center'});
-      }else{
-        doc.setFont(undefined,'bold'); doc.setTextColor(200,0,0);
-        doc.text('GPS: Not available', x+cellW/2, y+imgH+4.5, {align:'center'});
-        doc.setTextColor(0);
-      }
-      doc.setFont(undefined,'normal'); doc.setFontSize(8); doc.setTextColor(90);
-      doc.text(timeTxt, x+cellW/2, y+imgH+10, {align:'center'});
+      F(arabicOK); doc.setFontSize(8); doc.setTextColor(90);
+      doc.text(timeTxt, x+cellW/2, y+imgH+10.5, {align:'center'});
 
-      // رابط الصورة (نص مختصر قابل للضغط)
+      // 3) رابط الصورة
       const shortUrl = p.dataUrl.length>52 ? p.dataUrl.slice(0,52)+'...' : p.dataUrl;
-      doc.setFont('helvetica'); doc.setFontSize(7); doc.setTextColor(0,80,200);
-      doc.textWithLink(shortUrl, x+cellW/2, y+imgH+15.5, {align:'center', url:p.dataUrl});
+      doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(0,80,200);
+      doc.textWithLink(shortUrl, x+cellW/2, y+imgH+16, {align:'center', url:p.dataUrl});
 
-      // رابط خرائط Google
+      // 4) رابط خرائط Google
       if(coord){
         doc.setFontSize(7.5); doc.setTextColor(0,130,60);
-        doc.textWithLink('Open in Google Maps', x+cellW/2, y+imgH+21,
+        doc.textWithLink('Open in Google Maps', x+cellW/2, y+imgH+21.5,
           {align:'center', url:`https://www.google.com/maps?q=${p.lat},${p.lng}`});
       }
 
@@ -373,40 +400,35 @@ $('btnPdf').addEventListener('click',async()=>{
       doc.link(x, y, cellW, imgH, {url: p.dataUrl});
 
       // رقم الصورة
-      doc.setFontSize(8); doc.setTextColor(150);
+      doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(150);
       doc.text(`#${i+1}`, x+2.5, y+4);
     });
 
-    // العنوان + أرقام الصفحات على كل الصفحات
+    // العنوان + أرقام الصفحات
     const total=Math.ceil(photos.length/4);
     const titleTxt = arabicOK ? AR('تقرير الصور') : 'Photos Report';
     const hoodTxt  = arabicOK ? AR('الحي: '+(hood||'—')) : ('Hood: '+(hood||'-'));
     const dateTxt  = arabicOK ? AR('تاريخ الإصدار: '+fmtTime(Date.now())) : ('Issued: '+fmtTimeNum(Date.now()));
     for(let pg=1;pg<=total;pg++){
       doc.setPage(pg);
-      // عنوان رئيسي
-      doc.setFont(arabicOK?'ArabicFont':'helvetica');
-      doc.setFontSize(15); doc.setTextColor(15,60,80);
+      F(arabicOK); doc.setFontSize(15); doc.setTextColor(15,60,80);
       doc.text(titleTxt, pageW/2, margin+6, {align:'center'});
-      // الحي يمين + التاريخ يسار
-      doc.setFontSize(10.5); doc.setTextColor(60);
+      F(arabicOK); doc.setFontSize(10.5); doc.setTextColor(60);
       doc.text(hoodTxt, pageW-margin, margin+13, {align:'right'});
-      doc.setFont('helvetica'); doc.setFontSize(9);
+      F(arabicOK); doc.setFontSize(9);
       doc.text(dateTxt, margin, margin+13, {align:'left'});
-      // خط فاصل
       doc.setDrawColor(15,60,80); doc.setLineWidth(0.6);
       doc.line(margin, gridTop-4, pageW-margin, gridTop-4);
-      // رقم الصفحة
-      doc.setFontSize(9); doc.setTextColor(120);
+      doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(120);
       doc.text(`Page ${pg} / ${total}`, pageW/2, pageH-5, {align:'center'});
     }
 
     const fname=(hood?hood.replace(/[\\/:*?"<>|]/g,'-')+'-':'')+'تقرير-الصور.pdf';
     doc.save(fname);
-    toast(arabicOK?'✅ تم تصدير PDF بالعربية':'✅ تم التصدير (بدون خط عربي)');
+    toast(arabicOK?'✅ تم تصدير PDF بالعربية':'⚠️ تم التصدير بدون خط عربي (الإنترنت غير متوفر عند أول تصدير)');
   }catch(err){
     console.error(err);
-    toast('❌ فشل إنشاء PDF');
+    toast('❌ فشل إنشاء PDF: '+errMsg(err), true);
   }finally{
     hideOverlay();
   }
@@ -415,12 +437,15 @@ $('btnPdf').addEventListener('click',async()=>{
 /* ================== Clear all ================== */
 $('btnClear').addEventListener('click',async()=>{
   if(!confirm('سيتم حذف جميع الصور نهائياً. متابعة؟'))return;
-  await clearPhotos(); render();
+  await dbClear(); render();
   toast('🗑️ تم مسح جميع الصور');
 });
 
 /* ================== Init ================== */
-openDB().then(render).catch(()=>toast('❌ تعذر فتح قاعدة البيانات'));
+openDB().then(async()=>{
+  if(useLS){ lsSeq = lsLoad().reduce((m,p)=>Math.max(m,p.id||0),0)+1; }
+  render();
+}).catch(()=>{ useLS=true; render(); });
 </script>
 </body>
 </html>
