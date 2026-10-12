@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>📷 كاميرا الموقع - صور بالإحداثيات</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body {
+    font-family:'Segoe UI', Tahoma, Arial, sans-serif;
+    background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+    min-height:100vh; color:#fff; padding-bottom:40px;
+  }
+  .container { max-width:1000px; margin:0 auto; padding:20px; }
+  header { text-align:center; padding:25px 0 15px; }
+  header h1 { font-size:26px; margin-bottom:6px; }
+  header p { color:#9fd3e8; font-size:14px; }
+
+  .toolbar {
+    display:flex; gap:12px; flex-wrap:wrap; justify-content:center;
+    margin:18px 0;
+  }
+  button {
+    border:none; cursor:pointer; font-family:inherit; font-weight:bold;
+    border-radius:12px; padding:14px 22px; font-size:16px;
+    display:flex; align-items:center; gap:8px;
+    transition:transform .15s, box-shadow .15s;
+  }
+  button:active { transform:scale(.95); }
+  .btn-camera { background:linear-gradient(135deg,#11998e,#38ef7d); color:#06281f; box-shadow:0 4px 15px rgba(56,239,125,.35); }
+  .btn-pdf    { background:linear-gradient(135deg,#cb2d3e,#ef473a); color:#fff; box-shadow:0 4px 15px rgba(239,71,58,.35); }
+  .btn-clear  { background:rgba(255,255,255,.12); color:#ffb3b3; border:1px solid rgba(255,255,255,.25); }
+  .btn-camera:hover { box-shadow:0 6px 20px rgba(56,239,125,.55); }
+  .btn-pdf:hover    { box-shadow:0 6px 20px rgba(239,71,58,.55); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+
+  .stats {
+    text-align:center; margin:10px 0 20px; color:#cfe9f5; font-size:15px;
+  }
+  .stats b { color:#38ef7d; }
+
+  .grid {
+    display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:16px;
+  }
+  .card {
+    background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.15);
+    border-radius:14px; overflow:hidden; backdrop-filter:blur(6px);
+  }
+  .card img { width:100%; height:160px; object-fit:cover; display:block; cursor:pointer; }
+  .card .info { padding:10px 12px; font-size:13px; line-height:1.7; }
+  .coord { direction:ltr; text-align:left; color:#7ef0c1; font-weight:bold; font-size:12.5px; }
+  .time { color:#bcd6e2; font-size:12px; }
+  .no-gps { color:#ffb3b3; font-weight:bold; }
+  .del {
+    margin:0 12px 12px; padding:7px 12px; font-size:13px;
+    background:rgba(239,71,58,.2); color:#ff9d94; border:1px solid rgba(239,71,58,.5);
+    border-radius:8px;
+  }
+  .empty { text-align:center; padding:60px 20px; color:#8fb4c6; }
+  .empty .big { font-size:52px; margin-bottom:12px; }
+
+  /* overlay */
+  .overlay {
+    position:fixed; inset:0; background:rgba(0,0,0,.75);
+    display:none; align-items:center; justify-content:center; z-index:50; flex-direction:column; gap:18px;
+  }
+  .overlay.show { display:flex; }
+  .spinner {
+    width:52px; height:52px; border:5px solid rgba(255,255,255,.2);
+    border-top-color:#38ef7d; border-radius:50%; animation:spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform:rotate(360deg);} }
+
+  /* lightbox */
+  .lightbox {
+    position:fixed; inset:0; background:rgba(0,0,0,.92); z-index:60;
+    display:none; align-items:center; justify-content:center; flex-direction:column; padding:20px;
+  }
+  .lightbox.show { display:flex; }
+  .lightbox img { max-width:92%; max-height:75vh; border-radius:10px; }
+  .lightbox .lb-info { margin-top:14px; text-align:center; color:#7ef0c1; direction:ltr; font-weight:bold; }
+  .lightbox .lb-time { color:#bcd6e2; font-size:13px; margin-top:4px; }
+  .lightbox button { margin-top:16px; background:rgba(255,255,255,.15); color:#fff; }
+
+  .toast {
+    position:fixed; bottom:24px; right:50%; transform:translateX(50%);
+    background:#1c3b47; border:1px solid #38ef7d; color:#d9ffe9;
+    padding:12px 22px; border-radius:10px; z-index:70; display:none; font-size:14px;
+  }
+  .toast.show { display:block; animation:fadein .25s; }
+  @keyframes fadein { from{opacity:0; transform:translateX(50%) translateY(10px);} }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>📷 كاميرا الموقع</h1>
+    <p>التقط صورة وسيتم حفظها تلقائياً مع إحداثيات GPS في متصفحك</p>
+  </header>
+
+  <div class="toolbar">
+    <button class="btn-camera" id="btnCamera">📸 التقاط صورة</button>
+    <button class="btn-pdf" id="btnPdf">📄 تصدير PDF</button>
+    <button class="btn-clear" id="btnClear">🗑️ مسح الكل</button>
+  </div>
+
+  <div class="stats" id="stats"></div>
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="empty">
+    <div class="big">🗺️</div>
+    <p>لا توجد صور بعد — اضغط زر «التقاط صورة» للبدء</p>
+  </div>
+</div>
+
+<!-- hidden camera input -->
+<input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none">
+
+<!-- loading overlay -->
+<div class="overlay" id="overlay"><div class="spinner"></div><p id="overlayText">جارٍ المعالجة...</p></div>
+
+<!-- lightbox -->
+<div class="lightbox" id="lightbox">
+  <img id="lbImg" src="">
+  <div class="lb-info" id="lbCoord"></div>
+  <div class="lb-time" id="lbTime"></div>
+  <button onclick="document.getElementById('lightbox').classList.remove('show')">✖ إغلاق</button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ================== IndexedDB ================== */
+const DB_NAME='geoPhotosDB', STORE='photos';
+let db=null;
+
+function openDB(){
+  return new Promise((res,rej)=>{
+    const req=indexedDB.open(DB_NAME,1);
+    req.onupgradeneeded=e=>{
+      e.target.result.createObjectStore(STORE,{keyPath:'id',autoIncrement:true});
+    };
+    req.onsuccess=e=>{db=e.target.result;res();};
+    req.onerror=rej;
+  });
+}
+function addPhoto(p){return new Promise((res,rej)=>{
+  const tx=db.transaction(STORE,'readwrite');
+  tx.objectStore(STORE).add(p);
+  tx.oncomplete=res; tx.onerror=rej;
+});}
+function getAllPhotos(){return new Promise((res,rej)=>{
+  const r=db.transaction(STORE).objectStore(STORE).getAll();
+  r.onsuccess=()=>res((r.result||[]).sort((a,b)=>a.time-b.time));
+  r.onerror=rej;
+});}
+function deletePhoto(id){return new Promise((res,rej)=>{
+  const tx=db.transaction(STORE,'readwrite');
+  tx.objectStore(STORE).delete(id);
+  tx.oncomplete=res; tx.onerror=rej;
+});}
+function clearPhotos(){return new Promise((res,rej)=>{
+  const tx=db.transaction(STORE,'readwrite');
+  tx.objectStore(STORE).clear();
+  tx.oncomplete=res; tx.onerror=rej;
+});}
+
+/* ================== Helpers ================== */
+const $=id=>document.getElementById(id);
+function showOverlay(t){$('overlayText').textContent=t;$('overlay').classList.add('show');}
+function hideOverlay(){$('overlay').classList.remove('show');}
+let toastTimer=null;
+function toast(msg){
+  const t=$('toast'); t.textContent=msg; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>t.classList.remove('show'),3000);
+}
+function fmtTime(ts){
+  return new Date(ts).toLocaleString('ar-SA',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+function fmtCoord(p){
+  if(p.lat==null) return null;
+  const la=p.lat>=0?'N':'S', lo=p.lng>=0?'E':'W';
+  return `${Math.abs(p.lat).toFixed(6)}° ${la}, ${Math.abs(p.lng).toFixed(6)}° ${lo}`;
+}
+
+/* ================== Geolocation ================== */
+function getPosition(){
+  return new Promise(res=>{
+    if(!navigator.geolocation){res(null);return;}
+    navigator.geolocation.getCurrentPosition(
+      p=>res({lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy}),
+      ()=>res(null),
+      {enableHighAccuracy:true,timeout:12000,maximumAge:0}
+    );
+  });
+}
+
+/* ================== Image processing ================== */
+function compressImage(file,maxDim=1400,quality=0.85){
+  return new Promise((res,rej)=>{
+    const img=new Image();
+    const url=URL.createObjectURL(file);
+    img.onload=()=>{
+      let w=img.width,h=img.height;
+      const scale=Math.min(1,maxDim/Math.max(w,h));
+      w=Math.round(w*scale); h=Math.round(h*scale);
+      const c=document.createElement('canvas');
+      c.width=w; c.height=h;
+      c.getContext('2d').drawImage(img,0,0,w,h);
+      URL.revokeObjectURL(url);
+      res(c.toDataURL('image/jpeg',quality));
+    };
+    img.onerror=rej;
+    img.src=url;
+  });
+}
+
+/* ================== Capture flow ================== */
+$('btnCamera').addEventListener('click',()=>{$('cameraInput').click();});
+
+$('cameraInput').addEventListener('change',async e=>{
+  const file=e.target.files[0];
+  e.target.value='';
+  if(!file) return;
+  try{
+    showOverlay('📍 جارٍ تحديد الموقع...');
+    const pos=await getPosition();
+    showOverlay('🖼️ جارٍ معالجة الصورة...');
+    const dataUrl=await compressImage(file);
+    showOverlay('💾 جارٍ الحفظ...');
+    await addPhoto({dataUrl,lat:pos?pos.lat:null,lng:pos?pos.lng:null,
+                    acc:pos?Math.round(pos.acc):null,time:Date.now()});
+    hideOverlay();
+    toast(pos?'✅ تم الحفظ مع الموقع':'⚠️ تم الحفظ (تعذر تحديد الموقع)');
+    render();
+  }catch(err){
+    hideOverlay();
+    toast('❌ حدث خطأ أثناء الحفظ');
+  }
+});
+
+/* ================== Render gallery ================== */
+async function render(){
+  const photos=await getAllPhotos();
+  $('stats').innerHTML=photos.length?`📷 عدد الصور المحفوظة: <b>${photos.length}</b>`:'';
+  $('empty').style.display=photos.length?'none':'block';
+  $('grid').innerHTML='';
+  photos.forEach(p=>{
+    const card=document.createElement('div'); card.className='card';
+    const coord=fmtCoord(p);
+    card.innerHTML=`
+      <img src="${p.dataUrl}" alt="">
+      <div class="info">
+        ${coord?`<div class="coord">📍 ${coord}</div>`
+               :`<div class="no-gps">⚠️ بدون إحداثيات</div>`}
+        <div class="time">🕒 ${fmtTime(p.time)}</div>
+      </div>
+      <button class="del">🗑️ حذف</button>`;
+    card.querySelector('img').addEventListener('click',()=>{
+      $('lbImg').src=p.dataUrl;
+      $('lbCoord').textContent=coord?('📍 '+coord):'⚠️ بدون إحداثيات';
+      $('lbTime').textContent=fmtTime(p.time);
+      $('lightbox').classList.add('show');
+    });
+    card.querySelector('.del').addEventListener('click',async()=>{
+      if(!confirm('حذف هذه الصورة؟'))return;
+      await deletePhoto(p.id); render();
+      toast('🗑️ تم الحذف');
+    });
+    $('grid').appendChild(card);
+  });
+}
+
+/* ================== PDF Export (4 per page) ================== */
+$('btnPdf').addEventListener('click',async()=>{
+  const photos=await getAllPhotos();
+  if(!photos.length){toast('لا توجد صور للتصدير');return;}
+  if(!window.jspdf){toast('⚠️ مكتبة PDF لم تُحمّل (تحقق من الإنترنت أول مرة)');return;}
+
+  showOverlay('📄 جارٍ إنشاء ملف PDF...');
+  try{
+    const {jsPDF}=window.jspdf;
+    const doc=new jsPDF({unit:'mm',format:'a4',orientation:'portrait'});
+
+    const pageW=210,pageH=297,margin=10,gap=6;
+    const cellW=(pageW-2*margin-gap)/2;
+    const cellH=(pageH-2*margin-gap)/2;
+    const capH=16; // ارتفاع منطقة الإحداثيات تحت الصورة
+
+    photos.forEach((p,i)=>{
+      if(i>0 && i%4===0) doc.addPage();
+      const pos=i%4;
+      const col=pos%2, row=Math.floor(pos/2);
+      const x=margin+col*(cellW+gap);
+      const y=margin+row*(cellH+gap);
+      const imgH=cellH-capH;
+
+      // الصورة
+      doc.addImage(p.dataUrl,'JPEG',x,y,cellW,imgH);
+
+      // الإطار
+      doc.setDrawColor(180); doc.setLineWidth(0.3);
+      doc.rect(x,y,cellW,cellH);
+
+      // الإحداثيات والتاريخ
+      const coord=fmtCoord(p);
+      doc.setFontSize(9.5);
+      doc.setTextColor(0);
+      if(coord){
+        doc.setFont(undefined,'bold');
+        doc.text(`Lat/Lng: ${coord}`, x+cellW/2, y+imgH+5.5, {align:'center'});
+      }else{
+        doc.setFont(undefined,'bold');
+        doc.setTextColor(200,0,0);
+        doc.text('GPS: Not available', x+cellW/2, y+imgH+5.5, {align:'center'});
+        doc.setTextColor(0);
+      }
+      doc.setFont(undefined,'normal'); doc.setFontSize(8);
+      doc.setTextColor(90);
+      doc.text(fmtTime(p.time), x+cellW/2, y+imgH+11, {align:'center'});
+
+      // رقم الصورة
+      doc.setFontSize(8); doc.setTextColor(150);
+      doc.text(`#${i+1}`, x+2.5, y+4);
+    });
+
+    // أرقام الصفحات
+    const total=Math.ceil(photos.length/4);
+    for(let pg=1;pg<=total;pg++){
+      doc.setPage(pg);
+      doc.setFontSize(9); doc.setTextColor(120);
+      doc.text(`Page ${pg} / ${total}`, pageW/2, pageH-5, {align:'center'});
+    }
+
+    doc.save('photos-with-coordinates.pdf');
+    toast('✅ تم تصدير ملف PDF');
+  }catch(err){
+    console.error(err);
+    toast('❌ فشل إنشاء PDF');
+  }finally{
+    hideOverlay();
+  }
+});
+
+/* ================== Clear all ================== */
+$('btnClear').addEventListener('click',async()=>{
+  if(!confirm('سيتم حذف جميع الصور نهائياً. متابعة؟'))return;
+  await clearPhotos(); render();
+  toast('🗑️ تم مسح جميع الصور');
+});
+
+/* ================== Init ================== */
+openDB().then(render).catch(()=>toast('❌ تعذر فتح قاعدة البيانات'));
+</script>
+</body>
+</html>
