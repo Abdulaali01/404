@@ -67,6 +67,10 @@
   .dist-ok { color:#38ef7d; } .dist-mid { color:#ffc65c; } .dist-far { color:#ff7b72; }
   .count { font-weight:bold; font-size:15px; }
   .count.dup { color:#ffc65c; }
+  .btn-dup { background:rgba(255,198,92,.15); color:#ffd88a; border:1px solid rgba(255,198,92,.5); padding:10px 18px; font-size:14px; }
+  .btn-dup.active { background:linear-gradient(135deg,#f7b733,#fc4a1a); color:#fff; border-color:transparent; }
+  .table-tools { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; margin:0 0 12px; }
+  .no-rows { padding:22px; color:#8fb4c6; }
 
   .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:16px; }
   .card {
@@ -120,6 +124,9 @@
   <!-- جدول البلاغات -->
   <section class="table-box" id="tableBox">
     <div class="table-title" id="tableTitle"></div>
+    <div class="table-tools">
+      <button class="btn-dup" id="btnDup">🔁 عرض المكرر فقط</button>
+    </div>
     <div class="table-wrap">
       <table>
         <thead>
@@ -365,6 +372,7 @@ const getHood=()=>hoodInput.value.trim();
 let reportRows=[];      // صفوف الجدول بعد إزالة تكرار الجوال
 let reportFile='';
 let captureRowKey=null; // الصف الذي نلتقط له صورة الآن
+let showDupOnly=false;  // عرض المكرر فقط
 
 function normDigits(s){
   return String(s??'')
@@ -480,9 +488,16 @@ $('excelInput').addEventListener('change',async e=>{
   }
 });
 
+$('btnDup').addEventListener('click',()=>{
+  const dupCount=reportRows.filter(r=>r.count>1).length;
+  if(!showDupOnly && !dupCount){ toast('لا توجد أرقام مكررة في الجدول'); return; }
+  showDupOnly=!showDupOnly;
+  render();
+});
+
 $('btnClearTable').addEventListener('click',async()=>{
   if(!confirm('حذف الجدول؟ (الصور تبقى محفوظة)'))return;
-  reportRows=[]; reportFile='';
+  reportRows=[]; reportFile=''; showDupOnly=false;
   try{ await metaSet('reportRows',[]); await metaSet('reportFile',''); }catch(_){}
   render(); toast('🗑️ تم مسح الجدول');
 });
@@ -530,10 +545,19 @@ function renderTable(photos){
   const last={};
   photos.forEach(p=>{ if(p.rowKey) last[p.rowKey]=p; });
   const done=reportRows.filter(r=>last[r.key]).length;
-  $('tableTitle').innerHTML=`📊 ${esc(reportFile)} — البلاغات: <b>${reportRows.length}</b> | تم تصويرها: <b>${done}</b>`;
+  const dupRows=reportRows.filter(r=>r.count>1);
+  $('tableTitle').innerHTML=`📊 ${esc(reportFile)} — البلاغات: <b>${reportRows.length}</b> | تم تصويرها: <b>${done}</b> | المكرر: <b>${dupRows.length}</b>`;
 
+  // زر المكرر
+  if(showDupOnly && !dupRows.length) showDupOnly=false;
+  const bd=$('btnDup');
+  bd.classList.toggle('active',showDupOnly);
+  bd.textContent=showDupOnly?'📋 عرض الكل':`🔁 عرض المكرر فقط (${dupRows.length})`;
+
+  const rows=showDupOnly?[...dupRows].sort((a,b)=>b.count-a.count):reportRows;
   const tb=$('tableBody'); tb.innerHTML='';
-  reportRows.forEach(r=>{
+  if(!rows.length){ tb.innerHTML='<tr><td colspan="6" class="no-rows">لا توجد صفوف</td></tr>'; return; }
+  rows.forEach(r=>{
     const p=last[r.key];
     const tr=document.createElement('tr');
 
